@@ -1,0 +1,94 @@
+---
+- hosts: DataNode, NameNode
+  vars_files:
+     - cluster.yml
+  tasks:
+          - name: Copy Packages to Nodes
+            copy:
+                  src: "/ws/{{  item  }}"
+                  dest: /root/
+            loop:
+                    - "{{  hadoop_pkg  }}"
+                    - "{{  java_pkg  }}"
+            register: pkg_cpy
+
+          - name: Installing Packages
+            command: "rpm -i /root/{{  item  }} --force"
+            loop:
+                   - "{{  hadoop_pkg  }}"
+                   - "{{  java_pkg  }}"
+            when: pkg_cpy.changed == true
+
+          - name: Test pkg Installed
+            command: "rpm -q hadoop"
+            register: pkg_info
+
+- hosts: NameNode
+  vars_prompt:
+          - name: name_dir
+            prompt: Input NameNode Directory
+            private: no
+  tasks:
+          - name: Creating NameNode Directory
+            file:
+                  path: "{{  name_dir  }}"
+                  state: directory
+                  mode: 0755
+
+          - name: Install hdfs-config template
+            template:
+                  src: /ws/hdfs-name-temp.xml
+                  dest: /etc/hadoop/hdfs-site.xml
+
+          - name: Install config file
+            copy:
+                  src: /ws/core-name-temp.xml
+                  dest: /etc/hadoop/core-site.xml
+
+          - name: Format NameNode
+            shell: echo Y | hadoop namenode -format
+            when: pkg_info.rc == 0
+            ignore_errors: yes
+            notify: Start NameNode
+
+  handlers:
+          - name: Start NameNode
+            shell: hadoop-daemon.sh start namenode
+            ignore_errors: yes
+
+
+- hosts: DataNode
+  vars_prompt:
+          - name: data_dir
+            prompt: Input Directory for DataNode
+            private: no
+  tasks:
+          - name: Creating DataNode Directory
+            file:
+                  path: "{{  data_dir  }}"
+                  state: directory
+                  mode: 0755
+
+          - name: Install hdfs-config template
+            template:
+                  src: /ws/hdfs-data-temp.xml
+                  dest: /etc/hadoop/hdfs-site.xml
+
+          - name: Installing Config Template
+            template:
+                  src: /ws/core-data-temp.xml
+                  dest: /etc/hadoop/core-site.xml
+
+          - name: Start DataNode
+            command: hadoop-daemon.sh start datanode
+            when: pkg_info.rc == 0
+            ignore_errors: yes
+
+- hosts: NameNode
+  tasks:
+    - name: Cluster Report
+      command: hadoop dfsadmin -report
+      register: test
+
+    - debug:
+            var: test.stdout_lines
